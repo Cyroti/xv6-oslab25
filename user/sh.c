@@ -138,7 +138,7 @@ int main(void) {
 
   // Ensure that three file descriptors are open.
   while ((fd = open("console", O_RDWR)) >= 0) {
-    if (fd >= 3) {
+    if (fd >= 3) { //0 for standard input, 1 for standard output and 2 for standard input
       close(fd);
       break;
     }
