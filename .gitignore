@@ -27,3 +27,4 @@ compile_commands.json
 $HOME/
 ~/
 compile_commands.events.json
+commit.patch
