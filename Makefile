@@ -160,6 +160,7 @@ UPROGS=\
 	$U/_sleep\
 	$U/_pingpong\
 	$U/_find\
+	$U/_pipe_example\
 
 ifeq ($(LAB),syscall)
 UPROGS += \
