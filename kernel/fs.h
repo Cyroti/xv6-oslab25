@@ -55,7 +55,7 @@ struct dinode {
 
 // Directory is a file containing a sequence of dirent structures.
 #define DIRSIZ 14
-
+//dirent is directory entry, de.inum stands for inode number(0 is deleted), name is the name of the dir
 struct dirent {
   ushort inum;
   char name[DIRSIZ];
