@@ -1,0 +1,329 @@
+diff --git a/.gitignore b/.gitignore
+index 0e30481..c991b2e 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -24,3 +24,4 @@ compile_commands.json
+ .gdb_history
+ .cache/
+ .vscode/
++$HOME
+\ No newline at end of file
+diff --git a/Makefile b/Makefile
+index e9f1403..eb12040 100644
+--- a/Makefile
++++ b/Makefile
+@@ -164,6 +164,8 @@ UPROGS=\
+ 	$U/_zombie\
+ 	$U/_waittest\
+ 	$U/_exittest\
++	$U/_trace\
++	$U/_sysinfotest\
+ 
+ 
+ ifeq ($(LAB),trap)
+diff --git a/kernel/defs.h b/kernel/defs.h
+index 3323e7b..4a28063 100644
+--- a/kernel/defs.h
++++ b/kernel/defs.h
+@@ -69,6 +69,7 @@ void            ramdiskrw(struct buf*);
+ void*           kalloc(void);
+ void            kfree(void *);
+ void            kinit(void);
++uint64          getfreemem(void);
+ 
+ // log.c
+ void            initlog(int, struct superblock*);
+@@ -120,6 +121,7 @@ void            yield(void);
+ int             either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
+ int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
+ void            procdump(void);
++uint64          getfreenproc(void);
+ 
+ // swtch.S
+ void            swtch(struct context*, struct context*);
+diff --git a/kernel/kalloc.c b/kernel/kalloc.c
+index dbb0305..8b1e15b 100644
+--- a/kernel/kalloc.c
++++ b/kernel/kalloc.c
+@@ -68,3 +68,17 @@ void *kalloc(void) {
+   if (r) memset((char *)r, 5, PGSIZE);  // fill with junk
+   return (void *)r;
+ }
++
++uint64 getfreemem(void) {
++  // counting how many bytes of rest memory, in order to aid the sys_sysinf0
++  struct run *r;
++  uint64 n = 0;
++
++  acquire(&kmem.lock);
++  for (r = kmem.freelist; r != (struct run*)0; r = r->next) {
++    n++;
++  }
++  release(&kmem.lock);
++
++  return n * PGSIZE;
++}
+\ No newline at end of file
+diff --git a/kernel/param.h b/kernel/param.h
+index f98401f..4c8ce22 100644
+--- a/kernel/param.h
++++ b/kernel/param.h
+@@ -13,3 +13,5 @@
+ #define NBUF         (MAXOPBLOCKS*3)  // size of disk block cache
+ #define FSSIZE       1000  // size of file system in blocks
+ #define MAXPATH      128   // maximum file path name
++
++#define NOTRACE 0 //trace none of the syscalls
+\ No newline at end of file
+diff --git a/kernel/proc.c b/kernel/proc.c
+index f0c85fd..9003c61 100644
+--- a/kernel/proc.c
++++ b/kernel/proc.c
+@@ -202,6 +202,8 @@ void userinit(void) {
+ 
+   p->state = RUNNABLE;
+ 
++  p->trace_mask = NOTRACE; // aka. 0
++
+   release(&p->lock);
+ }
+ 
+@@ -245,6 +247,9 @@ int fork(void) {
+ 
+   np->parent = p;
+ 
++  //inherit the trace mask
++  np->trace_mask = p->trace_mask;
++
+   // copy saved user registers.
+   *(np->trapframe) = *(p->trapframe);
+ 
+@@ -619,3 +624,17 @@ void procdump(void) {
+     printf("\n");
+   }
+ }
++
++uint64 getfreenproc(void) {
++  struct proc *p;
++  uint64 cnt = 0;
++  
++  for (int i = 0; i < NPROC; i++) {
++    p = &proc[i];
++    acquire(&p->lock);
++    if (p->state == UNUSED)
++      ++cnt;
++    release(&p->lock);
++  }
++  return cnt;
++}
+\ No newline at end of file
+diff --git a/kernel/proc.h b/kernel/proc.h
+index 70f9a65..a8d38d6 100644
+--- a/kernel/proc.h
++++ b/kernel/proc.h
+@@ -109,4 +109,5 @@ struct proc {
+   struct file *ofile[NOFILE];  // Open files
+   struct inode *cwd;           // Current directory
+   char name[16];               // Process name (debugging)
++  int trace_mask;              // Trace mask for sys_trace
+ };
+diff --git a/kernel/syscall.c b/kernel/syscall.c
+index dd6b28d..ecf8133 100644
+--- a/kernel/syscall.c
++++ b/kernel/syscall.c
+@@ -89,6 +89,8 @@ extern uint64 sys_wait(void);
+ extern uint64 sys_write(void);
+ extern uint64 sys_uptime(void);
+ extern uint64 sys_rename(void);
++extern uint64 sys_trace(void);
++extern uint64 sys_sysinfo(void);
+ 
+ static uint64 (*syscalls[])(void) = {
+     [SYS_fork] = sys_fork,   [SYS_exit] = sys_exit,     [SYS_wait] = sys_wait,     [SYS_pipe] = sys_pipe,
+@@ -96,16 +98,100 @@ static uint64 (*syscalls[])(void) = {
+     [SYS_chdir] = sys_chdir, [SYS_dup] = sys_dup,       [SYS_getpid] = sys_getpid, [SYS_sbrk] = sys_sbrk,
+     [SYS_sleep] = sys_sleep, [SYS_uptime] = sys_uptime, [SYS_open] = sys_open,     [SYS_write] = sys_write,
+     [SYS_mknod] = sys_mknod, [SYS_unlink] = sys_unlink, [SYS_link] = sys_link,     [SYS_mkdir] = sys_mkdir,
+-    [SYS_close] = sys_close,
++    [SYS_close] = sys_close, [SYS_trace] = sys_trace, [SYS_sysinfo] = sys_sysinfo,
+ };
+ 
++static const char *name_syscalls[] = {
++    [SYS_fork] = "sys_fork",   [SYS_exit] = "sys_exit",     [SYS_wait] = "sys_wait",     [SYS_pipe] = "sys_pipe",
++    [SYS_read] = "sys_read",   [SYS_kill] = "sys_kill",     [SYS_exec] = "sys_exec",     [SYS_fstat] = "sys_fstat",
++    [SYS_chdir] = "sys_chdir", [SYS_dup] = "sys_dup",       [SYS_getpid] = "sys_getpid", [SYS_sbrk] = "sys_sbrk",
++    [SYS_sleep] = "sys_sleep", [SYS_uptime] = "sys_uptime", [SYS_open] = "sys_open",     [SYS_write] = "sys_write",
++    [SYS_mknod] = "sys_mknod", [SYS_unlink] = "sys_unlink", [SYS_link] = "sys_link",     [SYS_mkdir] = "sys_mkdir",
++    [SYS_close] = "sys_close", [SYS_trace] = "sys_trace",   [SYS_sysinfo] = "sys_sysinfo",
++};
++
++// 00=int  01=str  10=ptr  11=nil
++#define ARG_INT 0x00
++#define ARG_STR 0x01
++#define ARG_PTR 0x10
++#define ARG_NIL 0x11
++
++typedef struct {
++  uint8 cnt;    // 参数个数
++  uint8 ty[6];  // 各参数类型
++} sig_t;
++
++static const sig_t sig_syscalls[] = {[SYS_fork] = {0},
++                                     [SYS_exit] = {1, {ARG_INT}},
++                                     [SYS_wait] = {1, {ARG_PTR}},
++                                     [SYS_kill] = {2, {ARG_INT, ARG_INT}},
++                                     [SYS_exec] = {2, {ARG_STR, ARG_PTR}},
++                                     [SYS_getpid] = {0},
++                                     [SYS_sleep] = {1, {ARG_INT}},
++                                     [SYS_sbrk] = {1, {ARG_INT}},
++                                     [SYS_open] = {2, {ARG_STR, ARG_INT}},
++                                     [SYS_write] = {3, {ARG_INT, ARG_PTR, ARG_INT}},
++                                     [SYS_read] = {3, {ARG_INT, ARG_PTR, ARG_INT}},
++                                     [SYS_close] = {1, {ARG_INT}},
++                                     [SYS_dup] = {1, {ARG_INT}},
++                                     [SYS_pipe] = {1, {ARG_PTR}},
++                                     [SYS_chdir] = {1, {ARG_STR}},
++                                     [SYS_mkdir] = {1, {ARG_STR}},
++                                     [SYS_mknod] = {3, {ARG_STR, ARG_INT, ARG_INT}},
++                                     [SYS_fstat] = {2, {ARG_INT, ARG_PTR}},
++                                     [SYS_link] = {2, {ARG_STR, ARG_STR}},
++                                     [SYS_unlink] = {1, {ARG_STR}},
++                                     [SYS_uptime] = {0},
++                                     [SYS_trace] = {1, {ARG_INT}},
++                                     [SYS_sysinfo] = {1, {ARG_PTR}}
++                                    };
++
+ void syscall(void) {
+-  int num;
++  int num, trace_mask, pid;
+   struct proc *p = myproc();
+ 
+   num = p->trapframe->a7;
++  pid = p->pid;
+   if (num > 0 && num < NELEM(syscalls) && syscalls[num]) {
++    /* 1. 快照：把 a0-a5 先捞出来，避免执行后 trapframe 被覆盖 */
++    uint64 raw[6];
++    for (int i = 0; i < 6; i++) raw[i] = argraw(i);
++    /* 2. 执行系统调用 */
+     p->trapframe->a0 = syscalls[num]();
++    trace_mask = p->trace_mask;  // update the mask, so trace can trace itself
++    int ret = p->trapframe->a0;
++    if (((trace_mask >> num) & 0x1) == 0x1) {  // trace can trace itself now , since the mask has changed
++      /* 3. 用快照打印 */
++      const sig_t *s = &sig_syscalls[num];
++      printf("%d: %s(", pid, name_syscalls[num]);
++      if (s->cnt == 0) printf("%d", raw[0]);  // whatever in the a0
++
++      for (int i = 0; i < s->cnt; i++) {
++        uint8 ty = s->ty[i];
++        switch (ty) {
++          case ARG_INT:
++            printf("%d", (int)raw[i]);
++            break;
++          case ARG_PTR:
++            printf("%p", (void *)raw[i]);
++            break;
++          case ARG_STR: {
++            char tmp[64];
++            if (fetchstr(raw[i], tmp, sizeof(tmp)) < 0)
++              printf("<bad_str>");
++            else
++              // printf("%s", tmp); //we should print int
++              printf("%d", raw[i]);
++            break;
++          }
++          default:
++            printf("<?>");
++        }
++        if (i >= 0) break;  // according to the requirements, we only print the arg0
++        if (i != s->cnt - 1) printf(", ");
++      }
++      printf(") -> %d\n", ret);
++    }
+   } else {
+     printf("%d %s: unknown sys call %d\n", p->pid, p->name, num);
+     p->trapframe->a0 = -1;
+diff --git a/kernel/syscall.h b/kernel/syscall.h
+index 653d8de..e1227e6 100644
+--- a/kernel/syscall.h
++++ b/kernel/syscall.h
+@@ -23,3 +23,5 @@
+ #define SYS_mkdir  20
+ #define SYS_close  21
+ #define SYS_rename 22
++#define SYS_trace 23
++#define SYS_sysinfo 24
+\ No newline at end of file
+diff --git a/kernel/sysproc.c b/kernel/sysproc.c
+index a69071e..34c9385 100644
+--- a/kernel/sysproc.c
++++ b/kernel/sysproc.c
+@@ -1,3 +1,4 @@
++#include "kernel/sysinfo.h"
+ #include "types.h"
+ #include "riscv.h"
+ #include "defs.h"
+@@ -81,3 +82,31 @@ uint64 sys_rename(void) {
+   p->name[len] = '\0';
+   return 0;
+ }
++
++uint64 sys_trace(void) {
++  int mask;
++  if (argint(0, &mask) < 0) {
++    return -1;  // fail
++  }
++  struct proc *p = myproc();
++  p->trace_mask = mask;
++  return 0;
++}
++
++uint64 sys_sysinfo(void) {
++  struct sysinfo info;                  // in kernel thread stack
++  uint64 user_address;                  // user address can't directly accessed in kernel mode.
++  if (argaddr(0, &user_address) < 0) {  // 取用户指针
++    return -1;
++  }
++
++  info.freemem = getfreemem();
++  info.nproc = getfreenproc();
++
++  // 必须拷到用户空间，不能直接解引用
++  if (copyout(myproc()->pagetable, user_address, (char *)&info, sizeof(info)) < 0) {
++    return -1;
++  }
++
++  return 0;
++}
+\ No newline at end of file
+diff --git a/user/user.h b/user/user.h
+index 199c96f..38a168e 100644
+--- a/user/user.h
++++ b/user/user.h
+@@ -4,6 +4,7 @@
+ 
+ struct stat;
+ struct rtcdate;
++struct sysinfo;  // 需要预先声明结构体，参考fstat的参数stat
+ 
+ // system calls
+ int fork(void);
+@@ -28,6 +29,8 @@ char* sbrk(int);
+ int sleep(int);
+ int uptime(void);
+ int rename(const char*);
++int trace(int mask);
++int sysinfo(struct sysinfo *);
+ 
+ // ulib.c
+ int stat(const char*, struct stat*);
+diff --git a/user/usys.pl b/user/usys.pl
+index 3a2f6c4..903e8ad 100644
+--- a/user/usys.pl
++++ b/user/usys.pl
+@@ -37,3 +37,5 @@ entry("sbrk");
+ entry("sleep");
+ entry("uptime");
+ entry("rename");
++entry("trace");
++entry("sysinfo");
