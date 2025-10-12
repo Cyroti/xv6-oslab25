@@ -202,6 +202,8 @@ void userinit(void) {
 
   p->state = RUNNABLE;
 
+  p->trace_mask = NOTRACE; // aka. 0
+
   release(&p->lock);
 }
 
@@ -244,6 +246,9 @@ int fork(void) {
   np->sz = p->sz;
 
   np->parent = p;
+
+  //inherit the trace mask
+  np->trace_mask = p->trace_mask;
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);

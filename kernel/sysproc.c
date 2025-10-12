@@ -81,3 +81,13 @@ uint64 sys_rename(void) {
   p->name[len] = '\0';
   return 0;
 }
+
+uint64 sys_trace(void) {
+  int mask;
+  if(argint(0, &mask) < 0) {
+    return -1;//fail
+  }
+  struct proc *p = myproc();
+  p->trace_mask = mask;
+  return 0;
+}
