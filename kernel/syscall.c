@@ -161,7 +161,7 @@ void syscall(void) {
       /* 3. 用快照打印 */
       const sig_t *s = &sig_syscalls[num];
       printf("%d: %s(", pid, name_syscalls[num]);
-      if (s->cnt == 0) printf("void");  // void stands for no parameters
+      if (s->cnt == 0) printf("%d", raw[0]);  // whatever in the a0
 
       for (int i = 0; i < s->cnt; i++) {
         uint8 ty = s->ty[i];
