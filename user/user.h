@@ -4,6 +4,7 @@
 
 struct stat;
 struct rtcdate;
+struct sysinfo;  // 需要预先声明结构体，参考fstat的参数stat
 
 // system calls
 int fork(void);
@@ -29,6 +30,7 @@ int sleep(int);
 int uptime(void);
 int rename(const char*);
 int trace(int mask);
+int sysinfo(struct sysinfo *);
 
 // ulib.c
 int stat(const char*, struct stat*);

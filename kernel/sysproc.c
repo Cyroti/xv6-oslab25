@@ -1,3 +1,4 @@
+#include "kernel/sysinfo.h"
 #include "types.h"
 #include "riscv.h"
 #include "defs.h"
@@ -84,10 +85,28 @@ uint64 sys_rename(void) {
 
 uint64 sys_trace(void) {
   int mask;
-  if(argint(0, &mask) < 0) {
-    return -1;//fail
+  if (argint(0, &mask) < 0) {
+    return -1;  // fail
   }
   struct proc *p = myproc();
   p->trace_mask = mask;
+  return 0;
+}
+
+uint64 sys_sysinfo(void) {
+  struct sysinfo info;                  // in kernel thread stack
+  uint64 user_address;                  // user address can't directly accessed in kernel mode.
+  if (argaddr(0, &user_address) < 0) {  // 取用户指针
+    return -1;
+  }
+
+  info.freemem = getfreemem();
+  info.nproc = getfreenproc();
+
+  // 必须拷到用户空间，不能直接解引用
+  if (copyout(myproc()->pagetable, user_address, (char *)&info, sizeof(info)) < 0) {
+    return -1;
+  }
+
   return 0;
 }

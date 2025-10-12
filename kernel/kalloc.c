@@ -68,3 +68,17 @@ void *kalloc(void) {
   if (r) memset((char *)r, 5, PGSIZE);  // fill with junk
   return (void *)r;
 }
+
+uint64 getfreemem(void) {
+  // counting how many bytes of rest memory, in order to aid the sys_sysinf0
+  struct run *r;
+  uint64 n = 0;
+
+  acquire(&kmem.lock);
+  for (r = kmem.freelist; r != (struct run*)0; r = r->next) {
+    n++;
+  }
+  release(&kmem.lock);
+
+  return n * PGSIZE;
+}

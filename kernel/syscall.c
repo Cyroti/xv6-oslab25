@@ -90,6 +90,7 @@ extern uint64 sys_write(void);
 extern uint64 sys_uptime(void);
 extern uint64 sys_rename(void);
 extern uint64 sys_trace(void);
+extern uint64 sys_sysinfo(void);
 
 static uint64 (*syscalls[])(void) = {
     [SYS_fork] = sys_fork,   [SYS_exit] = sys_exit,     [SYS_wait] = sys_wait,     [SYS_pipe] = sys_pipe,
@@ -97,7 +98,7 @@ static uint64 (*syscalls[])(void) = {
     [SYS_chdir] = sys_chdir, [SYS_dup] = sys_dup,       [SYS_getpid] = sys_getpid, [SYS_sbrk] = sys_sbrk,
     [SYS_sleep] = sys_sleep, [SYS_uptime] = sys_uptime, [SYS_open] = sys_open,     [SYS_write] = sys_write,
     [SYS_mknod] = sys_mknod, [SYS_unlink] = sys_unlink, [SYS_link] = sys_link,     [SYS_mkdir] = sys_mkdir,
-    [SYS_close] = sys_close, [SYS_trace] = sys_trace,
+    [SYS_close] = sys_close, [SYS_trace] = sys_trace, [SYS_sysinfo] = sys_sysinfo,
 };
 
 static const char *name_syscalls[] = {
@@ -106,7 +107,7 @@ static const char *name_syscalls[] = {
     [SYS_chdir] = "sys_chdir", [SYS_dup] = "sys_dup",       [SYS_getpid] = "sys_getpid", [SYS_sbrk] = "sys_sbrk",
     [SYS_sleep] = "sys_sleep", [SYS_uptime] = "sys_uptime", [SYS_open] = "sys_open",     [SYS_write] = "sys_write",
     [SYS_mknod] = "sys_mknod", [SYS_unlink] = "sys_unlink", [SYS_link] = "sys_link",     [SYS_mkdir] = "sys_mkdir",
-    [SYS_close] = "sys_close", [SYS_trace] = "sys_trace",
+    [SYS_close] = "sys_close", [SYS_trace] = "sys_trace",   [SYS_sysinfo] = "sys_sysinfo",
 };
 
 // 00=int  01=str  10=ptr  11=nil
@@ -141,7 +142,9 @@ static const sig_t sig_syscalls[] = {[SYS_fork] = {0},
                                      [SYS_link] = {2, {ARG_STR, ARG_STR}},
                                      [SYS_unlink] = {1, {ARG_STR}},
                                      [SYS_uptime] = {0},
-                                     [SYS_trace] = {1, {ARG_INT}}};
+                                     [SYS_trace] = {1, {ARG_INT}},
+                                     [SYS_sysinfo] = {1, {ARG_PTR}}
+                                    };
 
 void syscall(void) {
   int num, trace_mask, pid;
