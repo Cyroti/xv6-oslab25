@@ -110,7 +110,7 @@ uint64 sys_cpustate(void) {
   uint64 uptr;
   if (argaddr(0, &uptr) < 0) return -1;
 
-  uint64 tmp[NCPU];
+  uint tmp[NCPU];
   for (int i = 0; i < NCPU; i++) tmp[i] = cpus[i].cpu_ticks;
 
   // 一次性拷到用户空间
