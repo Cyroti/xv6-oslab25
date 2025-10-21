@@ -136,7 +136,11 @@ static void freeproc(struct proc *p) {
   p->chan = 0;
   p->killed = 0;
   p->xstate = 0;
-  p->state = UNUSED;
+  // p->state = UNUSED;
+  update_state(p, UNUSED);
+  p->runnable_ticks = 0;
+  p->running_ticks = 0;
+  p->sleeping_ticks = 0;
 }
 
 // Create a user page table for a given process,
@@ -202,6 +206,12 @@ void userinit(void) {
   p->cwd = namei("/");
 
   p->state = RUNNABLE;
+  // acquire(&tickslock);
+  p->enter_ticks = ticks;    // 不持有 tickslock，避免锁反转
+  // release(&tickslock);
+  p->runnable_ticks = 0;
+  p->running_ticks = 0;
+  p->sleeping_ticks = 0;
 
   release(&p->lock);
 }
@@ -261,7 +271,14 @@ int fork(void) {
 
   pid = np->pid;
 
-  np->state = RUNNABLE;
+  np->state = RUNNABLE;  // no need to use update_state.
+
+  // acquire(&tickslock);
+  np->enter_ticks = ticks;
+  // release(&tickslock);
+  np->runnable_ticks = 0;
+  np->running_ticks = 0;
+  np->sleeping_ticks = 0;
 
   release(&np->lock);
 
@@ -346,7 +363,8 @@ void exit(int status) {
   wakeup1(original_parent);
 
   p->xstate = status;
-  p->state = ZOMBIE;
+  // p->state = ZOMBIE;
+  update_state(p, ZOMBIE);
 
   release(&original_parent->lock);
 
@@ -429,7 +447,8 @@ void scheduler(void) {
         // Switch to chosen process.  It is the process's job
         // to release its lock and then reacquire it
         // before jumping back to us.
-        p->state = RUNNING;
+        // p->state = RUNNING;
+        update_state(p, RUNNING);
         c->proc = p;
         swtch(&c->context, &p->context);
 
@@ -473,7 +492,8 @@ void sched(void) {
 void yield(void) {
   struct proc *p = myproc();
   acquire(&p->lock);
-  p->state = RUNNABLE;
+  // p->state = RUNNABLE;
+  update_state(p, RUNNABLE);
   sched();
   release(&p->lock);
 }
@@ -515,7 +535,8 @@ void sleep(void *chan, struct spinlock *lk) {
 
   // Go to sleep.
   p->chan = chan;
-  p->state = SLEEPING;
+  // p->state = SLEEPING;
+  update_state(p, SLEEPING);
 
   sched();
 
@@ -537,7 +558,8 @@ void wakeup(void *chan) {
   for (p = proc; p < &proc[NPROC]; p++) {
     acquire(&p->lock);
     if (p->state == SLEEPING && p->chan == chan) {
-      p->state = RUNNABLE;
+      // p->state = RUNNABLE;
+      update_state(p, RUNNABLE);
     }
     release(&p->lock);
   }
@@ -548,7 +570,8 @@ void wakeup(void *chan) {
 static void wakeup1(struct proc *p) {
   if (!holding(&p->lock)) panic("wakeup1");
   if (p->chan == p && p->state == SLEEPING) {
-    p->state = RUNNABLE;
+    // p->state = RUNNABLE;
+    update_state(p, RUNNABLE);
   }
 }
 
@@ -564,7 +587,8 @@ int kill(int pid) {
       p->killed = 1;
       if (p->state == SLEEPING) {
         // Wake process from sleep().
-        p->state = RUNNABLE;
+        // p->state = RUNNABLE;
+        update_state(p, RUNNABLE);
       }
       release(&p->lock);
       return 0;
@@ -624,4 +648,41 @@ void procdump(void) {
 // you must hold p->lock to call this function
 void update_state(struct proc *p, enum procstate newstate) {
   // TODO
+  if (!holding(&p->lock)) panic("update_state: p->lock");
+  enum procstate oldstate = p->state;
+  uint now;
+  // acquire(&tickslock);
+  now = ticks;
+  // release(&tickslock);
+  switch (oldstate) {
+    case RUNNABLE:
+      p->runnable_ticks += now - p->enter_ticks;
+      break;
+    case RUNNING:
+      p->running_ticks += now - p->enter_ticks;
+      struct cpu *c = mycpu();
+      c->cpu_ticks += now - p->enter_ticks;
+      break;
+    case SLEEPING:
+      p->sleeping_ticks += now - p->enter_ticks;
+      break;
+    default:
+      break;
+  }
+  p->state = newstate;
+  p->enter_ticks = now;
+  // release(&p->lock);// we are not responsible for release
+}
+
+struct proc *getproc_plain(int pid) {
+  struct proc *p;
+  for (p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if (p->pid == pid) {
+      release(&p->lock);
+      return p;
+    } else
+      release(&p->lock);
+  }
+  return 0;
 }

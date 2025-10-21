@@ -81,3 +81,41 @@ uint64 sys_rename(void) {
   p->name[len] = '\0';
   return 0;
 }
+
+uint64 sys_pstate(void) {
+  int pid;
+  uint64 running_time_ptr, runnable_time_ptr, sleeping_time_ptr;
+  if (argint(0, &pid) < 0) return -1;
+  if (argaddr(1, &running_time_ptr) < 0) return -1;
+  if (argaddr(2, &runnable_time_ptr) < 0) return -1;
+  if (argaddr(3, &sleeping_time_ptr) < 0) return -1;
+
+  struct proc *process = getproc_plain(pid);
+  if (process == 0) return -1;
+
+  acquire(&process->lock);
+  // 用临时变量减少持锁时间与重复 copyout 的竞态
+  uint running  = process->running_ticks;
+  uint runnable = process->runnable_ticks;
+  uint sleeping = process->sleeping_ticks;
+  release(&process->lock);
+
+  if (copyout(myproc()->pagetable, running_time_ptr,  (char *)&running,  sizeof(running))  < 0) return -1;
+  if (copyout(myproc()->pagetable, runnable_time_ptr, (char *)&runnable, sizeof(runnable)) < 0) return -1;
+  if (copyout(myproc()->pagetable, sleeping_time_ptr, (char *)&sleeping, sizeof(sleeping)) < 0) return -1;
+  return 0;
+}
+
+uint64 sys_cpustate(void) {
+  uint64 uptr;
+  if (argaddr(0, &uptr) < 0) return -1;
+
+  uint64 tmp[NCPU];
+  for (int i = 0; i < NCPU; i++) tmp[i] = cpus[i].cpu_ticks;
+
+  // 一次性拷到用户空间
+  if (copyout(myproc()->pagetable, uptr, (char *)tmp, sizeof(tmp)) < 0) return -1;
+  return 0;
+}
+
+void sys_setnice(void) {}

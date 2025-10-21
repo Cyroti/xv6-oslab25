@@ -30,6 +30,7 @@ struct cpu {
   struct context context;     // swtch() here to enter scheduler().
   int noff;                   // Depth of push_off() nesting.
   int intena;                 // Were interrupts enabled before push_off()?
+  uint cpu_ticks;               //how many ticks being spent on running processes
 };
 
 extern struct cpu cpus[NCPU];
@@ -112,4 +113,8 @@ struct proc {
 
   // add more here if needed, 
   // e.g. running time, ..., vruntime, nice ...
+  uint enter_ticks;        // 最近一次状态切换时的全局 ticks
+  uint runnable_ticks;     // 累计 RUNNABLE
+  uint running_ticks;      // 累计 RUNNING
+  uint sleeping_ticks;     // 累计 SLEEPING
 };
